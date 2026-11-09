@@ -1,0 +1,440 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Lion and the Mouse - Adventure</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;padding:15px;min-height:100vh;text-align:center;
+ font-family:Arial,sans-serif;color:white;
+ background:linear-gradient(145deg,#102d2c,#285a43,#132e38)
+}
+h1{color:#ffe49b;text-shadow:2px 3px #563a22;margin:8px}
+.subtitle{color:#d9f1d5;margin:8px}
+.game{max-width:950px;margin:auto}
+.stats{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:14px}
+.stat{background:#183e34;border:2px solid #91c78a;border-radius:14px;padding:10px 17px;font-weight:bold}
+#arena{position:relative;max-width:900px;margin:auto;border:5px solid #b4d58e;border-radius:20px;overflow:hidden;box-shadow:0 10px 30px #0008}
+canvas{display:block;width:100%;height:auto}
+.overlay{
+ position:absolute;inset:0;background:#10251ded;
+ display:flex;align-items:center;justify-content:center;padding:15px
+}
+.card{
+ max-width:570px;width:100%;padding:25px;
+ background:linear-gradient(145deg,#386548,#173d35);
+ border:3px solid #f4d48c;border-radius:23px;
+ box-shadow:0 8px 25px #0008
+}
+.card h2{color:#ffe49b;font-size:27px}
+.card p{line-height:1.6}
+button{
+ border:0;border-radius:13px;padding:13px 18px;
+ background:#f5d58d;color:#382a1d;font-size:16px;
+ font-weight:bold;cursor:pointer;margin:5px
+}
+button:hover{background:#ffedbb;transform:scale(1.03)}
+#controls{display:grid;grid-template-columns:repeat(3,58px);gap:5px;justify-content:center;margin:15px auto}
+#controls button{font-size:22px;padding:12px 0}
+.help{font-size:14px;color:#d9e9d2;line-height:1.7}
+#status{color:#ffe49b;font-weight:bold;min-height:22px}
+@media(max-width:550px){
+ h1{font-size:23px}.card{padding:15px}.card h2{font-size:22px}
+}
+</style>
+</head>
+<body>
+<div class="game">
+<h1>🦁 The Lion and the Mouse 🐭</h1>
+<p class="subtitle">An adventure of friendship, courage and kindness!</p>
+
+<div class="stats">
+ <div class="stat">⭐ Level: <span id="level">1</span>/3</div>
+ <div class="stat">❤️ Lives: <span id="lives">3</span></div>
+ <div class="stat">🧀 Cheese: <span id="cheese">0</span></div>
+</div>
+
+<div id="arena">
+<canvas id="game" width="900" height="550"></canvas>
+<div class="overlay" id="overlay">
+ <div class="card">
+  <h2 id="title">🐭 Help the Little Mouse!</h2>
+  <p id="description">
+   The little mouse is lost in the forest.
+   Help him collect all the cheese, avoid dangerous traps,
+   hide from the lion and find the exit!
+  </p>
+  <p id="status">Be careful! The lion is chasing you!</p>
+  <button id="mainButton" onclick="startGame()">▶ START ADVENTURE</button>
+ </div>
+</div>
+</div>
+
+<div id="controls">
+ <span></span><button onclick="moveTouch(0,-1)">⬆️</button><span></span>
+ <button onclick="moveTouch(-1,0)">⬅️</button>
+ <button onclick="moveTouch(0,1)">⬇️</button>
+ <button onclick="moveTouch(1,0)">➡️</button>
+</div>
+
+<button onclick="toggleSound()">🔊 Sound: <span id="soundLabel">ON</span></button>
+<button onclick="pauseGame()">⏸ Pause</button>
+
+<p class="help">
+⌨️ Use ARROW KEYS or W, A, S, D to move.<br>
+🧀 Collect ALL the cheese before reaching the exit.<br>
+🕳️ Stand near a hole and press E or SPACE to hide.<br>
+🔓 Press E or SPACE again to leave the hiding place.<br>
+⚠️ Avoid rocks, logs and traps. Do not let the lion catch you!
+</p>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const W=900,H=550;
+
+let level=1,lives=3,cheese=0;
+let running=false,paused=false;
+let mouse={x:65,y:475,speed:3.2};
+let lion={x:820,y:65,speed:1.1};
+let cheeses=[],rocks=[],logs=[],holes=[],bushes=[],traps=[];
+let keys={};
+let hidden=false,hideHole=null,lastRoar=0;
+let soundOn=true,audio=null;
+let trapCooldown=0;
+
+const levels=[
+ {name:"The Peaceful Forest",count:4,speed:1.05,obstacles:5},
+ {name:"The Dangerous Forest",count:6,speed:1.5,obstacles:9},
+ {name:"The Lion's Territory",count:8,speed:1.95,obstacles:14}
+];
+
+function updateStats(){
+ document.getElementById("level").textContent=level;
+ document.getElementById("lives").textContent=lives;
+ document.getElementById("cheese").textContent=cheese;
+}
+
+function audioStart(){
+ if(!soundOn)return;
+ try{
+  audio=audio||new(window.AudioContext||window.webkitAudioContext)();
+  if(audio.state==="suspended")audio.resume();
+ }catch(e){}
+}
+function tone(freq,duration,type="sine",volume=.06){
+ if(!soundOn)return;
+ audioStart();if(!audio)return;
+ const osc=audio.createOscillator(),gain=audio.createGain();
+ osc.type=type;osc.frequency.value=freq;
+ gain.gain.setValueAtTime(volume,audio.currentTime);
+ gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);
+ osc.connect(gain);gain.connect(audio.destination);
+ osc.start();osc.stop(audio.currentTime+duration);
+}
+function toggleSound(){
+ soundOn=!soundOn;
+ document.getElementById("soundLabel").textContent=soundOn?"ON":"OFF";
+ if(soundOn)audioStart();
+}
+function roar(){
+ if(Date.now()-lastRoar<3000)return;
+ lastRoar=Date.now();
+ tone(85,.6,"sawtooth",.1);
+ setTimeout(()=>tone(65,.4,"sawtooth",.08),180);
+}
+
+function distance(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function near(a,b,r){return distance(a,b)<r}
+
+function makeLevel(){
+ const data=levels[level-1];
+ mouse={x:65,y:475,speed:3.2+level*.2};
+ lion={x:820,y:65,speed:data.speed};
+ cheeses=[];rocks=[];logs=[];holes=[];bushes=[];traps=[];
+ hidden=false;hideHole=null;lastRoar=0;trapCooldown=0;
+
+ for(let i=0;i<data.count;i++){
+  cheeses.push({
+   x:160+(i*151+level*37)%650,
+   y:90+(i*113+level*51)%370,
+   got:false
+  });
+ }
+ for(let i=0;i<data.obstacles;i++){
+  const x=140+(i*139+level*67)%690;
+  const y=70+(i*91+level*79)%420;
+  if(Math.hypot(x-65,y-475)<100||Math.hypot(x-820,y-65)<90)continue;
+  if(i%3===0)logs.push({x,y,w:70,h:25});
+  else rocks.push({x,y,r:20+(i%3)*5});
+ }
+ for(let i=0;i<3+level;i++){
+  holes.push({
+   x:180+(i*187+level*43)%660,
+   y:130+(i*103+level*61)%330,
+   r:23
+  });
+ }
+ for(let i=0;i<8;i++){
+  bushes.push({x:(i*127+level*53)%900,y:(i*79+level*41)%550});
+ }
+ for(let i=0;i<level+1;i++){
+  traps.push({
+   x:240+(i*211+level*37)%580,
+   y:100+(i*137+level*47)%370,
+   r:22
+  });
+ }
+ cheese=0;updateStats();
+}
+
+function background(){
+ const grad=ctx.createLinearGradient(0,0,0,H);
+ grad.addColorStop(0,"#78a95c");
+ grad.addColorStop(1,"#365f3c");
+ ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+ ctx.fillStyle="#b8a071";
+ ctx.beginPath();
+ ctx.moveTo(0,455);
+ ctx.quadraticCurveTo(400,400,900,440);
+ ctx.lineTo(900,550);ctx.lineTo(0,550);ctx.fill();
+
+ for(let i=0;i<12;i++){
+  const x=(i*113+35)%900,y=(i*79+15)%500;
+  ctx.font="43px Arial";ctx.fillText("🌳",x,y+25);
+ }
+ bushes.forEach(b=>{
+  ctx.font="30px Arial";ctx.fillText("🌿",b.x,b.y);
+ });
+
+ ctx.font="58px Arial";ctx.fillText("🏁",830,500);
+ ctx.font="17px Arial";ctx.fillStyle="white";
+ ctx.fillText("EXIT",838,523);
+ ctx.font="17px Arial";ctx.fillText(levels[level-1].name,15,28);
+}
+
+function draw(){
+ background();
+
+ rocks.forEach(r=>{
+  ctx.font=(35+r.r)+"px Arial";
+  ctx.fillText("🪨",r.x-20,r.y+13);
+ });
+ logs.forEach(l=>{
+  ctx.save();ctx.translate(l.x,l.y);ctx.rotate(-.15);
+  ctx.font="35px Arial";ctx.fillText("🪵",-20,12);ctx.restore();
+ });
+
+ traps.forEach(t=>{
+  ctx.font="32px Arial";ctx.fillText("🕸️",t.x-17,t.y+10);
+  ctx.font="14px Arial";ctx.fillText("⚠️",t.x-8,t.y-14);
+ });
+
+ holes.forEach(h=>{
+  ctx.beginPath();ctx.ellipse(h.x,h.y,25,15,0,0,Math.PI*2);
+  ctx.fillStyle="#241a16";ctx.fill();
+  ctx.strokeStyle="#8a6744";ctx.lineWidth=5;ctx.stroke();
+  ctx.font="12px Arial";ctx.fillStyle="white";
+  ctx.fillText("HIDE",h.x-13,h.y+32);
+ });
+
+ cheeses.forEach(c=>{
+  if(!c.got){
+   ctx.font="29px Arial";ctx.fillText("🧀",c.x-15,c.y+11);
+  }
+ });
+
+ if(!hidden){
+  ctx.font="55px Arial";ctx.fillText("🦁",lion.x-28,lion.y+19);
+ }else{
+  ctx.font="38px Arial";ctx.fillText("🕳️",mouse.x-20,mouse.y+13);
+  ctx.font="16px Arial";ctx.fillStyle="white";
+  ctx.fillText("HIDDEN!",mouse.x-35,mouse.y-28);
+ }
+ ctx.font="37px Arial";
+ if(!hidden)ctx.fillText("🐭",mouse.x-20,mouse.y+13);
+}
+
+function showPanel(title,description,button,action){
+ const overlay=document.getElementById("overlay");
+ overlay.style.display="flex";
+ document.getElementById("title").textContent=title;
+ document.getElementById("description").textContent=description;
+ document.getElementById("status").textContent="";
+ const b=document.getElementById("mainButton");
+ b.textContent=button;b.onclick=action;
+}
+
+function startGame(){
+ audioStart();level=1;lives=3;makeLevel();startRound();
+}
+function startRound(){
+ document.getElementById("overlay").style.display="none";
+ running=true;paused=false;draw();
+}
+
+function hideOrLeave(){
+ if(!running)return;
+ if(hidden){
+  hidden=false;
+  hideHole=null;
+  document.getElementById("status").textContent="You are out! Keep moving!";
+  return;
+ }
+ const hole=holes.find(h=>near(mouse,h,48));
+ if(hole){
+  hidden=true;hideHole=hole;
+  mouse.x=hole.x;mouse.y=hole.y;
+  document.getElementById("status").textContent="You are hiding! Press E or SPACE to leave.";
+ }else{
+  document.getElementById("status").textContent="Move closer to a hiding hole!";
+ }
+ draw();
+}
+
+function move(dx,dy){
+ if(!running||paused||hidden)return;
+ const len=Math.hypot(dx,dy)||1;
+ mouse.x+=dx/len*mouse.speed;
+ mouse.y+=dy/len*mouse.speed;
+ mouse.x=Math.max(20,Math.min(W-20,mouse.x));
+ mouse.y=Math.max(35,Math.min(H-20,mouse.y));
+}
+function moveTouch(dx,dy){
+ if(!running||paused)return;
+ if(hidden)hideOrLeave();
+ else move(dx,dy);
+ checkWorld();draw();
+}
+
+function loseLife(message){
+ if(!running||Date.now()-trapCooldown<1200)return;
+ trapCooldown=Date.now();
+ lives--;updateStats();running=false;
+ hidden=false;hideHole=null;
+ if(lives<=0){
+  showPanel("Oh no! 😢",
+   "You have lost all your lives! The adventure starts again.",
+   "TRY AGAIN",()=>{
+    level=1;lives=3;makeLevel();startRound();
+   });
+ }else{
+  showPanel("Be careful! 🐭",
+   message+" You lost one life. Try again!",
+   "CONTINUE",()=>{
+    makeLevel();startRound();
+   });
+ }
+}
+
+function checkWorld(){
+ if(!running||hidden)return;
+
+ cheeses.forEach(c=>{
+  if(!c.got&&near(mouse,c,27)){
+   c.got=true;cheese++;updateStats();tone(650,.12);
+  }
+ });
+
+ traps.forEach(t=>{
+  if(near(mouse,t,24)){
+   traps=traps.filter(x=>x!==t);
+   loseLife("You fell into a trap!");
+  }
+ });
+
+ rocks.forEach(r=>{
+  if(near(mouse,r,r.r+10)){
+   mouse.x-=2;mouse.y-=2;
+  }
+ });
+ logs.forEach(l=>{
+  if(Math.abs(mouse.x-l.x)<35&&Math.abs(mouse.y-l.y)<25){
+   mouse.x-=2;mouse.y+=2;
+  }
+ });
+
+ if(near(mouse,lion,38))loseLife("The lion caught you!");
+
+ if(cheese===levels[level-1].count&&mouse.x>810&&mouse.y>445){
+  nextLevel();
+ }
+}
+
+function nextLevel(){
+ running=false;
+ if(level===3){showEnding();return;}
+ level++;
+ updateStats();
+ showPanel("Level completed! ⭐",
+  "Great job! You collected all the cheese. The next forest is more difficult!",
+  "NEXT LEVEL",()=>{
+   makeLevel();startRound();
+  });
+}
+
+function showEnding(){
+ running=false;
+ document.getElementById("overlay").style.display="flex";
+ document.getElementById("title").textContent="❤️ A Beautiful Friendship!";
+ document.getElementById("description").innerHTML=
+ "Congratulations! You completed all three levels!<br><br>The little mouse helped the lion, and they became best friends.<br><br>🦁🤝🐭<br><br>THE END!";
+ document.getElementById("status").textContent="Kindness and friendship are always important!";
+ const b=document.getElementById("mainButton");
+ b.textContent="PLAY AGAIN";b.onclick=startGame;
+ tone(523,.2);setTimeout(()=>tone(659,.2),250);setTimeout(()=>tone(784,.5),500);
+}
+
+function pauseGame(){
+ if(!running)return;
+ running=false;paused=true;
+ showPanel("Game Paused ⏸","Take a little break. The adventure will be waiting for you!",
+  "CONTINUE",()=>{
+   document.getElementById("overlay").style.display="none";
+   paused=false;running=true;
+  });
+}
+
+document.addEventListener("keydown",e=>{
+ if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key))e.preventDefault();
+ if((e.key==="e"||e.key==="E"||e.code==="Space")&&!e.repeat){
+  hideOrLeave();return;
+ }
+ keys[e.key]=true;
+ keys[e.key.toLowerCase()]=true;
+});
+document.addEventListener("keyup",e=>{
+ keys[e.key]=false;keys[e.key.toLowerCase()]=false;
+});
+
+function loop(){
+ requestAnimationFrame(loop);
+ if(!running||paused)return;
+
+ let dx=0,dy=0;
+ if(keys.ArrowRight||keys.d)dx++;
+ if(keys.ArrowLeft||keys.a)dx--;
+ if(keys.ArrowDown||keys.s)dy++;
+ if(keys.ArrowUp||keys.w)dy--;
+
+ if(dx||dy)move(dx,dy);
+
+ if(!hidden){
+  const d=distance(mouse,lion)||1;
+  lion.x+=(mouse.x-lion.x)/d*lion.speed;
+  lion.y+=(mouse.y-lion.y)/d*lion.speed;
+  if(d<155)roar();
+ }
+ checkWorld();
+ draw();
+}
+
+makeLevel();draw();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
